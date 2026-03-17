@@ -2,7 +2,8 @@
 
 from .baseline import WriteTimeInvalidation
 from .reconcile import Params, Segment, Timeline, objective, reconcile
+from .store import LedgerStore, StaleArtefact
 from .types import INF, Assertion, FuzzyInterval, Modality
 
 __version__ = "0.1.0"
-__all__ = ["INF", "Assertion", "FuzzyInterval", "Modality", "Params", "Segment", "Timeline", "objective", "reconcile", "WriteTimeInvalidation"]
+__all__ = ["INF", "Assertion", "FuzzyInterval", "Modality", "Params", "Segment", "Timeline", "objective", "reconcile", "WriteTimeInvalidation", "LedgerStore", "StaleArtefact"]
