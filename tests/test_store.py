@@ -100,3 +100,12 @@ def test_redaction_removes_a_source_from_every_version_and_refuses_stale_artefac
     with pytest.raises(StaleArtefact):
         store.check(SLOT, cached_epoch)
     assert store.learned_at(SLOT, "Lisbon") is None
+
+
+def test_first_believed_ignores_claims_that_never_won():
+    store = LedgerStore()
+    store.append(said("Berlin", 30, 30))
+    store.append(said("Porto", 40, 40, modality=Modality.REPORTED))  # outvoted by the user's own statement
+    store.append(said("Porto", 200, 200, valid=FuzzyInterval.exact(180, 200)))
+    assert store.learned_at(SLOT, "Porto") == 40
+    assert store.first_believed(SLOT, "Porto") == 200

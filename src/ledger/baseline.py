@@ -34,7 +34,7 @@ class Edge:
     sources: list[str] = field(default_factory=list)
 
     def valid_to_as_of(self, tx: float) -> float:
-        return self.closed_to if self.closed_at <= tx else self.valid_to
+        return self.closed_to if self.closed_at != INF and self.closed_at <= tx else self.valid_to
 
 
 class WriteTimeInvalidation:
@@ -51,6 +51,8 @@ class WriteTimeInvalidation:
         if self.use_modality and (a.modality is Modality.PROSPECTIVE or (a.modality is Modality.RETROSPECTIVE and a.valid is None)):
             return
         if a.modality is Modality.RETRACTION:
+            if a.valid is not None:
+                return  # "it was not X during [a, b)": an edge store has no way to record negative evidence
             for e in self._open(a.slot):
                 if e.value == a.value and e.valid_from < a.stmt_time:
                     e.closed_at, e.closed_to = a.tx_time, a.stmt_time

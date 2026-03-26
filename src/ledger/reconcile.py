@@ -171,26 +171,29 @@ def _viterbi(evidence: np.ndarray, lam: float) -> list[int]:
     return path[::-1]
 
 
-def _logsumexp(x: np.ndarray, axis: int) -> np.ndarray:
-    m = np.max(x, axis=axis, keepdims=True)
-    return np.squeeze(m + np.log(np.sum(np.exp(x - m), axis=axis, keepdims=True)), axis=axis)
-
-
 def _marginals(evidence: np.ndarray, lam: float, temperature: float) -> np.ndarray:
-    """Per-segment state marginals of the Gibbs distribution exp(S(f) / T) (forward-backward)."""
+    """Per-segment state marginals of the Gibbs distribution exp(S(f) / T) (forward-backward).
+
+    With a uniform switch penalty the transition sum collapses: sum_y a(y) K(y, x) = a(x)(1 - s) + s sum_y a(y),
+    with s = exp(-lambda / T), so each step is O(k) rather than O(k^2).
+    """
     n, k = evidence.shape
     phi = evidence / temperature
-    trans = np.full((k, k), -lam / temperature)
-    np.fill_diagonal(trans, 0.0)
-    alpha = np.zeros((n, k))
+    log_s = -lam / temperature
+    log_stay = np.log1p(-math.exp(log_s)) if lam > 0 else -np.inf
+    alpha = np.empty((n, k))
     beta = np.zeros((n, k))
     alpha[0] = phi[0]
     for j in range(1, n):
-        alpha[j] = phi[j] + _logsumexp(alpha[j - 1][:, None] + trans, axis=0)
+        prev = alpha[j - 1]
+        alpha[j] = phi[j] + np.logaddexp(prev + log_stay, log_s + np.logaddexp.reduce(prev))
     for j in range(n - 2, -1, -1):
-        beta[j] = _logsumexp(trans + (phi[j + 1] + beta[j + 1])[None, :], axis=1)
+        nxt = phi[j + 1] + beta[j + 1]
+        beta[j] = np.logaddexp(nxt + log_stay, log_s + np.logaddexp.reduce(nxt))
     post = alpha + beta
-    return np.exp(post - _logsumexp(post, axis=1)[:, None])
+    post -= post.max(axis=1, keepdims=True)
+    p = np.exp(post)
+    return p / p.sum(axis=1, keepdims=True)
 
 
 def _merge(cuts: list[float], labels: list[str | None], conf: list[float], lengths: np.ndarray) -> list[Segment]:

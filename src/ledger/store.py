@@ -28,36 +28,41 @@ class LedgerStore:
         self._versions: dict[Slot, list[tuple[float, Timeline]]] = defaultdict(list)
         self._epoch: dict[Slot, int] = defaultdict(int)
         self._clock = float("-inf")
+        self._dirty: set[Slot] = set()
         self.redactions: list[tuple[str, list[Slot]]] = []
 
     # writes
-    def append(self, a: Assertion) -> Timeline:
+    def append(self, a: Assertion) -> None:
+        """Append one assertion. Assertions sharing a transaction time are reconciled together, once."""
         if a.tx_time < self._clock:
             raise ValueError(f"transaction time {a.tx_time} precedes the ledger clock {self._clock}")
+        if a.tx_time > self._clock:
+            self._flush()
         self._clock = a.tx_time
         self._assertions[a.slot].append(a)
-        timeline = reconcile(self._assertions[a.slot], self.params)
-        versions = self._versions[a.slot]
-        if versions and versions[-1][0] == a.tx_time:
-            versions[-1] = (a.tx_time, timeline)
-        else:
-            versions.append((a.tx_time, timeline))
-        return timeline
+        self._dirty.add(a.slot)
+
+    def _flush(self) -> None:
+        for slot in self._dirty:
+            versions = self._versions[slot]
+            timeline = reconcile(self._assertions[slot], self.params)
+            if versions and versions[-1][0] == self._clock:
+                versions[-1] = (self._clock, timeline)
+            else:
+                versions.append((self._clock, timeline))
+        self._dirty.clear()
 
     def redact(self, source: str) -> list[Slot]:
         """Remove every assertion from `source`, rebuild the history of each affected slot and bump its epoch."""
+        self._flush()
         touched = [s for s, items in self._assertions.items() if any(a.source == source for a in items)]
         for slot in touched:
             kept = [a for a in self._assertions[slot] if a.source != source]
-            self._assertions[slot] = []
-            self._versions[slot] = []
-            for a in kept:
-                self._assertions[slot].append(a)
-                tl = reconcile(self._assertions[slot], self.params)
-                if self._versions[slot] and self._versions[slot][-1][0] == a.tx_time:
-                    self._versions[slot][-1] = (a.tx_time, tl)
-                else:
-                    self._versions[slot].append((a.tx_time, tl))
+            self._assertions[slot] = kept
+            versions: list[tuple[float, Timeline]] = []
+            for tx in sorted({a.tx_time for a in kept}):
+                versions.append((tx, reconcile([a for a in kept if a.tx_time <= tx], self.params)))
+            self._versions[slot] = versions
             self._epoch[slot] += 1
         self.redactions.append((source, touched))
         return touched
@@ -70,11 +75,13 @@ class LedgerStore:
         return list(self._assertions.get(slot, []))
 
     def current(self, slot: Slot) -> Timeline:
+        self._flush()
         versions = self._versions.get(slot)
         return versions[-1][1] if versions else Timeline([])
 
     def as_of(self, slot: Slot, tx: float) -> Timeline:
         """The timeline the store held at transaction time tx."""
+        self._flush()
         versions = self._versions.get(slot, [])
         i = bisect.bisect_right([v[0] for v in versions], tx)
         return versions[i - 1][1] if i else Timeline([])
@@ -87,6 +94,14 @@ class LedgerStore:
             if a.value == value and a.modality not in (Modality.PROSPECTIVE, Modality.RETRACTION)
         ]
         return min(times) if times else None
+
+    def first_believed(self, slot: Slot, value: str) -> float | None:
+        """The first transaction time at which the reconciled timeline contained the value."""
+        self._flush()
+        for tx, timeline in self._versions.get(slot, []):
+            if any(seg.value == value for seg in timeline.segments):
+                return tx
+        return None
 
     def changes(self, slot: Slot, t0: float, t1: float, as_of: float = float("inf")) -> list[tuple[float, str, str]]:
         """(valid time, from, to) for every switch between two values inside [t0, t1)."""

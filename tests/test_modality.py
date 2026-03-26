@@ -54,3 +54,11 @@ def test_confidence_is_high_when_uncontested_and_lower_when_contested():
     contested = reconcile([said("Berlin", 100), said("Porto", 100, Modality.REPORTED)], Params())
     assert alone.confidence_at(150) > 0.9
     assert 0.5 < contested.confidence_at(150) < alone.confidence_at(150)
+
+
+def test_a_newer_first_person_statement_ends_the_persistence_of_an_older_one():
+    tl = reconcile([said("Berlin", 0), said("Berlin", 20), said("Lisbon", 40)], Params())
+    assert tl.value_at(10) == "Berlin"
+    assert tl.value_at(60) == "Lisbon"
+    assert tl.value_at(300) == "Lisbon"
+    assert 10 <= tl.change_points()[0] <= 40
