@@ -1,0 +1,15 @@
+# CPU toy setting: synthetic life scripts, scored on the five BiTempQA question types.
+users = 40
+seeds = [0, 1, 2]
+regimes = ["in-order", "shuffled"]
+p_late = 0.35
+modality_noise = 0.0
+
+[params]
+switch_penalty = 6.0
+persistence_weight = 0.5
+persistence_days = 365.0
+lookback_days = 30.0
+reported_weight = 0.6
+recency_per_year = 0.3
+temperature = 2.0
