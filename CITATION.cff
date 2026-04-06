@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the report."
+title: "LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon LLM Agents"
+authors:
+  - family-names: Agarwal
+    given-names: Manav
+    affiliation: hanaML
+version: 0.1.0
+date-released: 2026-04-08
+license: Apache-2.0
+repository-code: "https://github.com/hanaml-lab/temporal-graphrag-memory"
+url: "https://hanaml.com/research/papers/temporal-graphrag-memory"
+preferred-citation:
+  type: report
+  title: "LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon LLM Agents"
+  authors:
+    - family-names: Agarwal
+      given-names: Manav
+  institution:
+    name: hanaML
+  year: 2026
+  url: "https://hanaml.com/research/papers/temporal-graphrag-memory"
