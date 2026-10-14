@@ -1,0 +1,12 @@
+{"slot": ["acme", "plan"], "value": "starter", "modality": "current", "said": 0}
+{"slot": ["acme", "billing_city"], "value": "Austin", "modality": "current", "said": 5}
+{"slot": ["acme", "plan"], "value": "starter", "modality": "current", "said": 20}
+{"slot": ["acme", "plan"], "value": "enterprise", "modality": "prospective", "said": 75}
+{"slot": ["acme", "billing_city"], "value": "Denver", "modality": "current", "said": 130, "learned": 131}
+{"slot": ["acme", "plan"], "value": "pro", "modality": "current", "said": 150, "valid": [58, 62, 150, 150]}
+{"slot": ["acme", "plan"], "value": "pro", "modality": "current", "said": 90, "learned": 160}
+{"slot": ["acme", "billing_city"], "value": "Austin", "modality": "retraction", "said": 128, "learned": 200}
+{"slot": ["acme", "billing_city"], "value": "Denver", "modality": "current", "said": 210}
+{"slot": ["acme", "plan"], "value": "enterprise", "modality": "reported", "said": 240}
+{"slot": ["acme", "plan"], "value": "enterprise", "modality": "current", "said": 260, "learned": 262, "valid": [236, 244, 260, 260]}
+{"slot": ["acme", "plan"], "value": "starter", "modality": "retrospective", "said": 300}
