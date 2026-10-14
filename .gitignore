@@ -1,9 +1,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-results/
 *.egg-info/
 build/
-scripts/paper/data.json
-scripts/paper/tables/
-scripts/paper/figures/
+paper/data.json
+paper/tables/
+paper/figures/
+results/

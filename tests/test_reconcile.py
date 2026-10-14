@@ -1,6 +1,6 @@
 """Seam: ledger.reconcile(assertions, params) -> Timeline."""
 
-from ledger import Assertion, Modality, Params, reconcile
+from ledger import Assertion, Params, reconcile
 
 SLOT = ("user", "lives_in")
 

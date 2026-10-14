@@ -361,7 +361,8 @@ for name, e in D["lme"]["readers"]["qwen"].items():
     cells = [f"\\textbf{{{c}}}" if best and t not in ("SS-user",) else c for c, t in zip(cells, LME_TYPES)]
     ov = f1(e["overall"]["mean"])
     ab = f1(e["abstention"]["mean"]) if "abstention" in e else "--"
-    lines.append(f"{label} & " + " & ".join(cells) + f" & {ab} & {'\\textbf{' + ov + '}' if best else ov} \\\\")
+    shown = "\\textbf{" + ov + "}" if best else ov
+    lines.append(f"{label} & " + " & ".join(cells) + f" & {ab} & {shown} \\\\")
 (TAB / "lme_types.tex").write_text("\n".join(lines) + "\n")
 
 # Appendix: LongMemEval-S by type, GPT-4o-mini.

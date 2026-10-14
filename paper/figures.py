@@ -270,7 +270,7 @@ def calibration():
     ax = axes[2]
     S = D["sensitivity"]
     grid = np.array(S["acc"])
-    im = ax.imshow(grid, cmap="Blues", aspect="auto", vmin=grid.min() - 1, vmax=grid.max())
+    ax.imshow(grid, cmap="Blues", aspect="auto", vmin=grid.min() - 1, vmax=grid.max())
     for i in range(grid.shape[0]):
         for j in range(grid.shape[1]):
             ax.text(j, i, f"{grid[i, j]:.1f}", ha="center", va="center", fontsize=5.2, color="white" if (grid[i, j] - grid.min() + 1) / (grid.max() - grid.min() + 1) > 0.55 else "#222222")
