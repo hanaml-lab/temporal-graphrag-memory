@@ -1,0 +1,17 @@
+# CPU toy setting for python -m ledger.demo: one history in many arrival orders, then synthetic life scripts scored
+# on the five BiTempQA question types.
+orders: 100                 # random arrival orders of the 20-assertion history
+users: 40
+seeds: [0]
+regimes: [in-order, shuffled]
+p_late: 0.35
+modality_noise: 0.0
+
+params:
+  switch_penalty: 6.0
+  persistence_weight: 0.5
+  persistence_days: 365.0
+  lookback_days: 30.0
+  reported_weight: 0.6
+  recency_per_year: 0.3
+  temperature: 2.0
