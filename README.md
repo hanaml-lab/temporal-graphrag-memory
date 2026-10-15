@@ -108,7 +108,7 @@ These numbers come from the report's seeded simulation and are illustrative. GPT
 | LEDGER store, write-time invalidation | 64.9 | 52.6 | 53.0 | 61.1 | | |
 | **LEDGER** | **77.2** | **76.9** | **76.9** | **62.4** | **69.4** | **68.6** |
 
-`bash scripts/reproduce_paper.sh` regenerates every table and figure. On every push, CI reruns `paper/make_data.py` and checks its tables and results against `paper/results.sha256` (`python paper/check_results.py`), so the report's numbers are exactly what the script emits.
+`bash scripts/reproduce_paper.sh` regenerates the tables and figures that the report's seeded simulation produces. On every push, CI reruns `paper/make_data.py` and checks the tables and results it writes against `paper/results.sha256` (`python paper/check_results.py`).
 
 ## Layout
 
