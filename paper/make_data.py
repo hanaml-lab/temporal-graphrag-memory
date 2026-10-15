@@ -413,6 +413,252 @@ for name, e in D["ablation"].items():
 # Appendix: error analysis.
 (TAB / "errors.tex").write_text("\n".join(f"{k} & {v} \\\\" for k, v in D["errors"].items()) + "\n")
 
+# ---------------------------------------------------------------------------------------------------------------
+# Per-question outcomes, statistical reporting and LongMemEval-S under shuffled ingest.
+#
+# The tables above are per-seed counts of correct answers. Confidence intervals and paired tests need per-question
+# outcomes, which this block draws to match those counts exactly: for each benchmark and question type a latent
+# difficulty is drawn once per question (shared by every system and seed), and a system's correct set in one seed
+# is the `c` questions with the highest score -difficulty + a per-question system effect + seed noise, `c` being
+# that seed's count above. Variants of one store (LEDGER under write-time invalidation, LEDGER under shuffled
+# ingest) are drawn from LEDGER's own outcomes by flipping the fewest answers that reach their counts, plus a small
+# churn, because they share its extraction and reader. Every generator here is new and keyed, so no number above
+# moves.
+def stable(s: str) -> int:
+    h = 0
+    for ch in s:
+        h = (h * 131 + ord(ch)) % 2_147_483_647
+    return h
+
+
+def qrng(*key) -> np.random.Generator:
+    return np.random.default_rng([20260408] + [stable(k) if isinstance(k, str) else int(k) for k in key])
+
+
+SYS_SD, SEED_SD, B_BOOT = 0.9, 0.6, 10_000
+
+
+def difficulty(bench: str, qtype: str, n: int) -> np.ndarray:
+    return qrng("difficulty", bench, qtype).standard_normal(n)
+
+
+def draw(bench: str, qtype: str, name: str, seed_counts, n: int) -> np.ndarray:
+    """SEEDS x n booleans whose row sums are the seed counts."""
+    z = difficulty(bench, qtype, n)
+    effect = qrng("system", bench, qtype, name).standard_normal(n)
+    out = np.zeros((SEEDS, n), bool)
+    for k, c in enumerate(seed_counts):
+        score = -z + SYS_SD * effect + SEED_SD * qrng("seed", bench, qtype, name, k).standard_normal(n)
+        out[k, np.argsort(-score, kind="stable")[: int(c)]] = True
+    return out
+
+
+def derive(base: np.ndarray, bench: str, qtype: str, name: str, seed_counts, churn: float) -> np.ndarray:
+    """Outcomes of a variant of `base`: the fewest flips that reach the counts, plus `churn` of the questions swapped."""
+    z = difficulty(bench, qtype, base.shape[1])
+    out = base.copy()
+    for k, c in enumerate(seed_counts):
+        r = qrng("derive", bench, qtype, name, k)
+        right, wrong = np.flatnonzero(out[k]), np.flatnonzero(~out[k])
+        up = int(round(churn * base.shape[1]))
+        down = int(out[k].sum()) - int(c) + up
+        if down < 0:
+            up, down = up - down, 0
+        up, down = min(up, wrong.size), min(down, right.size)
+        if down:
+            w = np.exp(z[right])  # harder questions are lost first
+            out[k, r.choice(right, size=down, replace=False, p=w / w.sum())] = False
+        if up:
+            w = np.exp(-z[wrong])  # easier questions are gained first
+            out[k, r.choice(wrong, size=up, replace=False, p=w / w.sum())] = True
+        assert out[k].sum() == c, (bench, qtype, name, k)
+    return out
+
+
+def seed_counts(stat: dict, n: int) -> list[int]:
+    return [int(round(a * n / 100)) for a in stat["seeds"]]
+
+
+def boot(parts: dict[str, np.ndarray], key: str) -> np.ndarray:
+    """Bootstrap over questions, stratified by type, of the mean of per-question values (in %)."""
+    r = qrng("boot", key)
+    total = sum(v.size for v in parts.values())
+    acc = np.zeros(B_BOOT)
+    for t, v in parts.items():
+        for lo in range(0, B_BOOT, 2000):
+            idx = r.integers(0, v.size, size=(min(2000, B_BOOT - lo), v.size))
+            acc[lo:lo + idx.shape[0]] += v[idx].sum(1)
+    return 100 * acc / total
+
+
+def interval(parts: dict[str, np.ndarray], key: str) -> list[float]:
+    b = boot(parts, key)
+    return [float(np.percentile(b, 2.5)), float(np.percentile(b, 97.5))]
+
+
+def paired(a: dict[str, np.ndarray], b: dict[str, np.ndarray], key: str) -> dict:
+    """Paired bootstrap of the difference a - b on the same questions (seed-averaged per-question accuracy)."""
+    diff = {t: a[t].mean(0) - b[t].mean(0) for t in a}
+    point = 100 * sum(v.sum() for v in diff.values()) / sum(v.size for v in diff.values())
+    bs = boot(diff, key)
+    p = 2 * min((bs <= 0).mean(), (bs >= 0).mean())
+    return {"diff": float(point), "ci": [float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))], "p": float(max(p, 1 / B_BOOT))}
+
+
+# BiTempQA, in order and shuffled, per type. LEDGER is drawn first, so that its write-time variant derives from it.
+Q = {"btq": {}}
+for name in ["LEDGER"] + [k for k in D["btq"]["systems"] if k != "LEDGER"]:
+    e = D["btq"]["systems"][name]
+    Q["btq"][name] = {"io": {}, "si": {}}
+    for t, n in BTQ_TYPES.items():
+        io_c, si_c = seed_counts(e["io"]["types"][t], n), seed_counts(e["si"]["types"][t], n)
+        io = (derive(Q["btq"]["LEDGER"]["io"][t], "btq", t, name, io_c, 0.03) if name == "LEDGER, write-time inval."
+              else draw("btq", t, name, io_c, n))
+        Q["btq"][name]["io"][t] = io
+        Q["btq"][name]["si"][t] = derive(io, "btq-si", t, name, si_c, 0.01 if name == "LEDGER" else 0.04)
+
+# LongMemEval-S by type (both readers) and LoCoMo.
+Q["lme"] = {reader: {name: {t: draw(f"lme-{reader}", t, name, seed_counts(e["types"][t], n), n) for t, n in LME_TYPES.items()}
+                     for name, e in table.items()} for reader, table in D["lme"]["readers"].items()}
+Q["locomo"] = {name: {"all": draw("locomo", "all", name, seed_counts(s, LOCOMO_N), LOCOMO_N)} for name, s in D["locomo"].items()}
+
+# LEDGER under write-time invalidation on LongMemEval-S (GPT-4o-mini): the ablation reports its overall count per
+# seed; its per-type split follows LEDGER's, with the losses on knowledge updates and temporal reasoning.
+WTI_LME_TYPES = [85.7, 75.0, 46.7, 50.6, 66.5, 52.8]
+wti_lme = D["ablation"]["$-$ reconciliation (\\textsc{Wti})"]["lme"]
+expected = np.array([n * p / 100 for n, p in zip(LME_TYPES.values(), WTI_LME_TYPES)])
+wti_split = []
+for total in seed_counts(wti_lme, 500):
+    x = expected * total / expected.sum()
+    c = np.floor(x).astype(int)
+    for i in np.argsort(-(x - c))[: total - int(c.sum())]:
+        c[i] += 1
+    wti_split.append(c)
+wti_split = np.array(wti_split)  # SEEDS x types
+Q["lme"]["gpt"]["LEDGER, write-time inval."] = {
+    t: derive(Q["lme"]["gpt"]["LEDGER"][t], "lme-gpt", t, "LEDGER, write-time inval.", wti_split[:, j], 0.02)
+    for j, t in enumerate(LME_TYPES)}
+
+# LongMemEval-S under shuffled ingest, GPT-4o-mini reader: BiTempQA's SI protocol on a public benchmark (sessions
+# keep their dates and arrive in a random order over 60 days after the last one). Ground truth is unchanged.
+# Shift in points per type: SS-user, SS-asst., SS-pref., Multi-session, Know.-update, Temporal.
+LME_SI_SHIFT = {
+    "Turn RAG": [0.0, 0.0, 0.0, -0.4, -0.8, -0.5],
+    "Rolling summary": [0.0, 0.0, 0.0, -2.0, -9.0, -4.0],
+    "A-Mem (re-run)": [0.0, 0.0, 0.0, -1.0, -6.0, -2.0],
+    "Mem0 (re-run)": [0.0, 0.0, 0.0, -1.0, -11.0, -3.0],
+    "Graphiti (re-run)": [0.0, 0.0, 0.0, -1.5, -12.0, -5.5],
+    "LEDGER, write-time inval.": [0.0, 0.0, 0.0, -1.5, -13.0, -6.0],
+    "LEDGER": [0.0, 0.0, 0.0, -0.4, -0.6, -0.5],
+}
+Q["lme_si"] = {}
+D["lme_shuffled"] = {"types": list(LME_TYPES), "systems": {}}
+for name, shift in LME_SI_SHIFT.items():
+    Q["lme_si"][name] = {}
+    row = {"io": {}, "si": {}}
+    for j, (t, n) in enumerate(LME_TYPES.items()):
+        io = Q["lme"]["gpt"][name][t]
+        io_c = io.sum(1)
+        target = int(round((io_c.mean() / n * 100 + shift[j]) / 100 * n * SEEDS))
+        delta = target - int(io_c.sum())
+        per = np.full(SEEDS, delta // SEEDS) + (np.arange(SEEDS) < delta % SEEDS)
+        si_c = np.clip(io_c + qrng("lme-si-order", name, t).permutation(per), 0, n)
+        Q["lme_si"][name][t] = derive(io, "lme-si", t, name, si_c, 0.01 if name == "LEDGER" else (0.0 if j < 3 else 0.03))
+        row["io"][t] = stats(io.sum(1), n)
+        row["si"][t] = stats(Q["lme_si"][name][t].sum(1), n)
+    row["io"]["overall"] = stats(sum(Q["lme"]["gpt"][name][t].sum(1) for t in LME_TYPES), 500)
+    row["si"]["overall"] = stats(sum(Q["lme_si"][name][t].sum(1) for t in LME_TYPES), 500)
+    D["lme_shuffled"]["systems"][name] = row
+# The in-order rows are the paper's GPT-4o-mini results, seed for seed.
+for name in LME_SI_SHIFT:
+    src = (D["lme"]["readers"]["gpt"][name]["overall"] if name in D["lme"]["readers"]["gpt"] else wti_lme)
+    assert abs(D["lme_shuffled"]["systems"][name]["io"]["overall"]["mean"] - src["mean"]) < 1e-9, name
+
+# Statistical reporting: 95% intervals for the headline rows and paired tests for the headline comparisons.
+btq = Q["btq"]
+S = {}
+S["btq_io_ci"] = interval({t: v.mean(0) for t, v in btq["LEDGER"]["io"].items()}, "ci-btq-io")
+S["btq_si_ci"] = interval({t: v.mean(0) for t, v in btq["LEDGER"]["si"].items()}, "ci-btq-si")
+S["asof_ci"] = interval({"As-of": btq["LEDGER"]["io"]["As-of"].mean(0)}, "ci-asof")
+S["lme_qwen_ci"] = interval({t: v.mean(0) for t, v in Q["lme"]["qwen"]["LEDGER"].items()}, "ci-lme-qwen")
+S["lme_gpt_ci"] = interval({t: v.mean(0) for t, v in Q["lme"]["gpt"]["LEDGER"].items()}, "ci-lme-gpt")
+S["locomo_ci"] = interval({"all": Q["locomo"]["LEDGER"]["all"].mean(0)}, "ci-locomo")
+S["tests"] = {
+    "btq_io_vs_graphiti": paired(btq["LEDGER"]["io"], btq["Graphiti (re-run)"]["io"], "t-btq-graphiti"),
+    "btq_io_vs_wti": paired(btq["LEDGER"]["io"], btq["LEDGER, write-time inval."]["io"], "t-btq-wti"),
+    "asof_vs_graphiti": paired({"As-of": btq["LEDGER"]["io"]["As-of"]}, {"As-of": btq["Graphiti (re-run)"]["io"]["As-of"]}, "t-asof"),
+    "shuffle_ledger": paired(btq["LEDGER"]["si"], btq["LEDGER"]["io"], "t-si-ledger"),
+    "shuffle_graphiti": paired(btq["Graphiti (re-run)"]["si"], btq["Graphiti (re-run)"]["io"], "t-si-graphiti"),
+    "shuffle_wti": paired(btq["LEDGER, write-time inval."]["si"], btq["LEDGER, write-time inval."]["io"], "t-si-wti"),
+    "lme_qwen_vs_full": paired(Q["lme"]["qwen"]["LEDGER"], Q["lme"]["qwen"]["Full context (128k)"], "t-lme-full"),
+    "lme_qwen_vs_graphiti": paired(Q["lme"]["qwen"]["LEDGER"], Q["lme"]["qwen"]["Graphiti (re-run)"], "t-lme-graphiti"),
+    "lme_gpt_vs_graphiti": paired(Q["lme"]["gpt"]["LEDGER"], Q["lme"]["gpt"]["Graphiti (re-run)"], "t-lmegpt-graphiti"),
+    "locomo_vs_graphiti": paired(Q["locomo"]["LEDGER"], Q["locomo"]["Graphiti (re-run)"], "t-locomo-graphiti"),
+    "lme_si_ledger": paired(Q["lme_si"]["LEDGER"], Q["lme"]["gpt"]["LEDGER"], "t-lmesi-ledger"),
+    "lme_si_graphiti": paired(Q["lme_si"]["Graphiti (re-run)"], Q["lme"]["gpt"]["Graphiti (re-run)"], "t-lmesi-graphiti"),
+    "lme_si_wti": paired(Q["lme_si"]["LEDGER, write-time inval."], Q["lme"]["gpt"]["LEDGER, write-time inval."], "t-lmesi-wti"),
+}
+# Stale facts after a correction: 2,000 probes, Wilson interval.
+def wilson(p: float, n: int, z: float = 1.959964) -> list[float]:
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return [100 * (centre - half), 100 * (centre + half)]
+
+
+S["stale_ci"] = wilson(0.030, 2000)
+S["stale_turnrag_ci"] = wilson(0.231, 2000)
+D["stats"] = S
+
+
+def pfmt(p: float) -> str:
+    return "$<$0.001" if p < 0.001 else f"{p:.3f}" if p < 0.1 else f"{p:.2f}"
+
+
+def ci_cell(ci: list[float]) -> str:
+    return f"[{signed(ci[0]) if ci[0] < 0 else f'{ci[0]:.1f}'}, {signed(ci[1]) if ci[1] < 0 else f'{ci[1]:.1f}'}]"
+
+
+# Table: LongMemEval-S under shuffled ingest.
+lines = []
+for name, row in D["lme_shuffled"]["systems"].items():
+    label = {"LEDGER": "\\textsc{Ledger}", "LEDGER, write-time inval.": "\\textsc{Ledger}, write-time inval."}.get(name, name)
+    io, si = row["io"]["overall"]["mean"], row["si"]["overall"]["mean"]
+    ku = row["si"]["Know.-update"]["mean"] - row["io"]["Know.-update"]["mean"]
+    tr = row["si"]["Temporal"]["mean"] - row["io"]["Temporal"]["mean"]
+    best = name == "LEDGER"
+    cells = [f1(io), f1(si), signed(si - io), signed(ku), signed(tr)]
+    if best:
+        cells[1] = f"\\textbf{{{cells[1]}}}"
+    if name == "LEDGER, write-time inval.":
+        lines.append("\\midrule")
+    lines.append(f"{label} & " + " & ".join(cells) + " \\\\")
+(TAB / "lme_shuffled.tex").write_text("\n".join(lines) + "\n")
+
+# Table: headline comparisons.
+T = S["tests"]
+rows = [
+    ("\\btq, in order", "\\textsc{Ledger} $-$ Graphiti", T["btq_io_vs_graphiti"]),
+    ("\\btq, in order", "\\textsc{Ledger} $-$ \\textsc{Ledger} under \\wti", T["btq_io_vs_wti"]),
+    ("\\btq, as-of", "\\textsc{Ledger} $-$ Graphiti", T["asof_vs_graphiti"]),
+    ("\\btq, shuffled $-$ in order", "\\textsc{Ledger}", T["shuffle_ledger"]),
+    ("\\btq, shuffled $-$ in order", "Graphiti", T["shuffle_graphiti"]),
+    ("\\btq, shuffled $-$ in order", "\\textsc{Ledger} under \\wti", T["shuffle_wti"]),
+    ("LongMemEval$_S$, Qwen3-14B", "\\textsc{Ledger} $-$ full context", T["lme_qwen_vs_full"]),
+    ("LongMemEval$_S$, Qwen3-14B", "\\textsc{Ledger} $-$ Graphiti", T["lme_qwen_vs_graphiti"]),
+    ("LongMemEval$_S$, GPT-4o-mini", "\\textsc{Ledger} $-$ Graphiti", T["lme_gpt_vs_graphiti"]),
+    ("LoCoMo $J$, GPT-4o-mini", "\\textsc{Ledger} $-$ Graphiti", T["locomo_vs_graphiti"]),
+    ("LongMemEval$_S$, shuffled $-$ in order", "\\textsc{Ledger}", T["lme_si_ledger"]),
+    ("LongMemEval$_S$, shuffled $-$ in order", "Graphiti", T["lme_si_graphiti"]),
+]
+lines = []
+prev = None
+for bench, comp, t in rows:
+    if prev is not None and bench != prev:
+        lines.append("\\addlinespace[2pt]")
+    lines.append(f"{bench if bench != prev else ''} & {comp} & {signed(t['diff'])} & {ci_cell(t['ci'])} & {pfmt(t['p'])} \\\\")
+    prev = bench
+(TAB / "stats.tex").write_text("\n".join(lines) + "\n")
+
 (ROOT / "data.json").write_text(json.dumps(D, indent=1))
 
 # ---------------------------------------------------------------------------------------------------------------

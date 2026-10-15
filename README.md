@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/hanaml-lab/temporal-graphrag-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/hanaml-lab/temporal-graphrag-memory/actions/workflows/ci.yml)
 
-Reference implementation of *LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon LLM Agents* (Agarwal, hanaML technical report, 2026).
+Reference implementation of *LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon LLM Agents* (Agarwal, hanaML preprint, July 2025).
 
 Temporal knowledge-graph memories record when a fact held (valid time) and when the agent learned it (transaction time). They maintain the valid-time axis by **write-time invalidation**: each incoming fact is compared once with the edges still open, and a contradicted edge is closed for good. The result depends on the order in which evidence arrives, and a misread assertion (a reminiscence, a plan, someone else's claim) closes a true edge permanently.
 
@@ -124,11 +124,11 @@ tests/            pytest suite
 ## Citation
 
 ```bibtex
-@techreport{agarwal2026ledger,
+@techreport{agarwal2025ledger,
   title       = {{LEDGER}: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon {LLM} Agents},
   author      = {Agarwal, Manav},
   institution = {hanaML},
-  year        = {2026},
+  year        = {2025},
   url         = {https://hanaml.com/research/papers/temporal-graphrag-memory}
 }
 ```
