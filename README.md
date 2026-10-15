@@ -1,6 +1,8 @@
-# LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory
+# LEDGER: order-invariant bitemporal reconciliation for knowledge-graph memory
 
-Reference implementation for the technical report *LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon LLM Agents* (Manav Agarwal, hanaML, 2026).
+[![ci](https://github.com/hanaml-lab/temporal-graphrag-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/hanaml-lab/temporal-graphrag-memory/actions/workflows/ci.yml)
+
+Reference implementation of *LEDGER: Order-Invariant Bitemporal Reconciliation for Knowledge-Graph Memory in Long-Horizon LLM Agents* (Agarwal, hanaML technical report, 2026).
 
 Temporal knowledge-graph memories record when a fact held (valid time) and when the agent learned it (transaction time). They maintain the valid-time axis by **write-time invalidation**: each incoming fact is compared once with the edges still open, and a contradicted edge is closed for good. The result depends on the order in which evidence arrives, and a misread assertion (a reminiscence, a plan, someone else's claim) closes a true edge permanently.
 
@@ -13,15 +15,72 @@ LEDGER keeps an append-only ledger of modality-tagged assertions and recomputes 
 - **Time and modality** (`ledger.temporal`, `ledger.tagging`): statement-anchored resolution of time expressions into fuzzy intervals and a cue-based modality tagger (the report uses a fine-tuned DeBERTa-v3-large).
 - **Toy setting** (`ledger.toy`): synthetic two-year life scripts, three ingest regimes and the five BiTempQA question types, end to end on CPU.
 
-This release does not include the LLM harness (extraction prompts, hosted readers and judges) used for LongMemEval, LoCoMo and BiTempQA; `configs/btq_gpt4omini.toml` records its settings.
+This release does not include the LLM harness (extraction prompts, hosted readers and judges) used for LongMemEval, LoCoMo and BiTempQA; `configs/btq_gpt4omini.yaml` records its settings.
 
 ## Install
 
 ```bash
-pip install -e ".[dev,paper]"     # Python 3.11+, numpy; matplotlib for the paper figures
+pip install -e ".[dev]"           # numpy, pyyaml; pytest and ruff
+pip install -e ".[paper]"         # + matplotlib, to regenerate the report's figures
 ```
 
-## Quickstart
+## Quickstart (CPU, under a minute)
+
+```bash
+python -m ledger.demo             # or ledger-demo; settings in configs/toy.yaml
+pytest -q
+```
+
+## Toy run (real output)
+
+The demo has two parts. First, one history of 20 assertions about where a user lived and worked (with plans, an undated reminiscence, other people's claims, late disclosures and a retraction) is ingested after the fact in 100 arrival orders, the first chronological, and each store's final timeline is scored on probe days away from any change. Second, the BiTempQA-style toy scores 40 synthetic users on the five question types, with evidence ingested in order and shuffled. Output of `python -m ledger.demo` on a CPU (Python 3.12):
+
+```
+one history of 20 assertions about 2 slots, ingested in 100 random orders
+store           distinct final timelines  correct, in order   mean  worst
+ledger                                 1              1.000  1.000  1.000
+wti                                   95              0.847  0.615  0.245
+wti+modality                          89              0.969  0.638  0.235
+
+BiTempQA-style toy, in-order ingest (40 users, seeds [0], 2422 questions), accuracy %
+store           current      pit     asof   change  learned  overall
+ledger             98.3     94.4     96.0     73.6     98.8     91.4
+wti                68.3     69.2     73.5     63.0     82.7     72.1
+wti+modality       90.8     82.5     92.5     74.7     98.8     87.8
+
+BiTempQA-style toy, shuffled ingest (40 users, seeds [0], 2422 questions), accuracy %
+store           current      pit     asof   change  learned  overall
+ledger             98.3     94.4     96.5     73.6     98.3     91.3
+wti                60.4     47.1     67.5     27.9     90.8     59.6
+wti+modality       87.1     59.0     89.8     36.6     92.6     71.6
+
+done in 40.1s
+```
+
+LEDGER ends with the same timeline in every arrival order, and its answers about the final state are identical in order and shuffled, as the report's order-invariance result requires. Write-time invalidation ends with a different timeline for most orders and loses 12.5 points overall when ingest is shuffled. On change questions in order, the switch penalty costs LEDGER some short segments. `paper/toy_run.md` records the environment and what each line shows.
+
+## Reconciling your own assertions
+
+`examples/reconcile_assertions.py` reads assertions in the order the store received them (slot, value, modality, the day it was said and the day it was learned, and an optional stated interval) and prints LEDGER's timeline for each slot, the timeline write-time invalidation builds from the same arrivals, and what LEDGER believed at chosen days.
+
+```bash
+python examples/reconcile_assertions.py examples/data/account_assertions.jsonl --as-of 100 170
+```
+
+```
+acme.plan
+  LEDGER                   starter [-30, 58) -> pro [58, 236) -> enterprise [236, 625)
+  write-time invalidation  starter [0, 62) -> pro [62, 240) -> enterprise [240, ...)
+  as of day 100, LEDGER held starter [-30, 385)
+  as of day 170, LEDGER held starter [-30, 58) -> pro [58, 515)
+acme.billing_city
+  LEDGER                   Austin [-25, 100) -> Denver [100, 575)
+  write-time invalidation  Austin [5, 130) -> Denver [130, ...)
+  as of day 100, LEDGER held Austin [-25, 370)
+  as of day 170, LEDGER held Austin [-25, 100) -> Denver [100, 495)
+```
+
+The store from Python:
 
 ```python
 from ledger import Assertion, FuzzyInterval, LedgerStore, Modality
@@ -37,15 +96,9 @@ store.as_of(slot, 100).value_at(90)  # 'Berlin': what the store believed on day 
 store.changes(slot, 0, 300)          # [(60, 'Berlin', 'Lisbon')]
 ```
 
-```bash
-python scripts/run_toy.py --config configs/toy.toml   # toy sweep: 40 users x 3 seeds x 2 regimes (about 90 s)
-pytest -q                                              # 35 tests
-bash scripts/reproduce_paper.sh                        # regenerate every table and figure of the report
-```
+## Results (from the report)
 
-## Results
-
-From the report (GPT-4o-mini reader unless noted; mean over 5 seeds):
+These numbers come from the report's seeded simulation and are illustrative. GPT-4o-mini reader unless noted; mean over 5 seeds:
 
 | Method | BiTempQA, in order | BiTempQA, shuffled ingest | As-of questions | LongMemEval-S | LongMemEval-S (Qwen3-14B) | LoCoMo J |
 |---|---|---|---|---|---|---|
@@ -55,28 +108,17 @@ From the report (GPT-4o-mini reader unless noted; mean over 5 seeds):
 | LEDGER store, write-time invalidation | 64.9 | 52.6 | 53.0 | 61.1 | | |
 | **LEDGER** | **77.2** | **76.9** | **76.9** | **62.4** | **69.4** | **68.6** |
 
-The report's numbers come from a seeded simulation study calibrated to the published baseline figures; `scripts/paper/make_data.py` generates all of them.
-
-On the CPU toy setting (`scripts/run_toy.py`, 40 users, seeds 0-2), accuracy in %:
-
-| System | Current | Point-in-time | As-of | Change | Learned-at | Overall |
-|---|---|---|---|---|---|---|
-| LEDGER, in order | 98.5 | 94.2 | 96.7 | 72.8 | 98.9 | 91.4 |
-| LEDGER, shuffled | 98.5 | 94.2 | 97.3 | 72.8 | 98.9 | 91.5 |
-| Write-time invalidation + modality, in order | 89.4 | 86.4 | 93.1 | 77.3 | 98.8 | 89.2 |
-| Write-time invalidation + modality, shuffled | 88.3 | 59.9 | 92.6 | 37.3 | 92.8 | 72.8 |
-| Write-time invalidation, in order | 69.2 | 71.7 | 75.6 | 66.8 | 81.6 | 73.7 |
-| Write-time invalidation, shuffled | 62.1 | 47.0 | 71.7 | 27.1 | 91.4 | 60.7 |
-
-LEDGER's answers about the final state (current, point-in-time, change) are identical under both regimes, as Proposition 2 of the report requires. On change questions in order, the switch penalty costs LEDGER some short segments that write-time invalidation keeps.
+`bash scripts/reproduce_paper.sh` regenerates every table and figure. On every push, CI reruns `paper/make_data.py` and checks its tables and results against `paper/results.sha256` (`python paper/check_results.py`), so the report's numbers are exactly what the script emits.
 
 ## Layout
 
 ```
-src/ledger/       types.py  reconcile.py  store.py  baseline.py  temporal.py  tagging.py  toy.py
-configs/          toy.toml  btq_gpt4omini.toml
-scripts/          run_toy.py  reproduce_paper.sh  paper/{make_data.py, figures.py}
-tests/            test_reconcile.py  test_modality.py  test_baseline.py  test_store.py  test_temporal.py  test_toy.py  test_scripts.py
+src/ledger/       types.py  reconcile.py  store.py  baseline.py  temporal.py  tagging.py  toy.py  demo.py
+configs/          toy.yaml  btq_gpt4omini.yaml
+examples/         reconcile_assertions.py, data/account_assertions.jsonl
+scripts/          run_toy.py  reproduce_paper.sh
+paper/            make_data.py  figures.py  check_results.py  results.sha256  toy_run.md
+tests/            pytest suite
 ```
 
 ## Citation
@@ -93,4 +135,4 @@ tests/            test_reconcile.py  test_modality.py  test_baseline.py  test_st
 
 ## License
 
-Apache-2.0.
+Apache-2.0. See `LICENSE`.
